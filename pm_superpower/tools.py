@@ -120,6 +120,56 @@ _QUERY_SCHEMAS: dict[str, dict] = {
             "required": [],
         },
     },
+    "product_metrics": {
+        "name": "get_product_metrics",
+        "description": "Get product KPIs and usage metrics (DAU, MAU, conversion, retention, revenue)",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["dau", "mau", "conversion", "retention", "revenue", "churn", "nps", "all"],
+                    },
+                    "description": "Which metrics to fetch. Use 'all' for a full dashboard.",
+                    "default": ["all"],
+                },
+                "period": {
+                    "type": "string",
+                    "enum": ["day", "week", "month", "quarter"],
+                    "description": "Time period for the metrics",
+                    "default": "week",
+                },
+                "compare_to": {
+                    "type": "string",
+                    "enum": ["previous_period", "last_year", "target"],
+                    "description": "What to compare against",
+                    "default": "previous_period",
+                },
+            },
+            "required": [],
+        },
+    },
+    "sprint_velocity": {
+        "name": "get_sprint_velocity",
+        "description": "Get engineering team sprint velocity, story points completed, and cycle time",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sprints": {
+                    "type": "integer",
+                    "description": "Number of past sprints to include",
+                    "default": 6,
+                },
+                "team": {
+                    "type": "string",
+                    "description": "Team name or ID (optional — returns all teams if omitted)",
+                },
+            },
+            "required": [],
+        },
+    },
 }
 
 _ACTION_SCHEMAS: dict[str, dict] = {
@@ -248,6 +298,12 @@ def get_pm_action_tools(tool_names: list[str]) -> list[dict]:
 # Query handlers
 # ---------------------------------------------------------------------------
 
+def get_pm_metrics_tools(tool_names: list[str]) -> list[dict]:
+    """Return tool schemas for the Analyst agent."""
+    metrics_keys = {"product_metrics", "sprint_velocity"}
+    return [_QUERY_SCHEMAS[n] for n in tool_names if n in metrics_keys and n in _QUERY_SCHEMAS]
+
+
 def execute_pm_tool(tool_name: str, tool_input: dict, config) -> str:
     """Execute a PM query tool; falls back to mock data if not configured."""
     dispatch = {
@@ -256,6 +312,8 @@ def execute_pm_tool(tool_name: str, tool_input: dict, config) -> str:
         "github_activity": _github_activity,
         "slack_search": _slack_search,
         "calendar_events": _calendar_events,
+        "get_product_metrics": _get_product_metrics,
+        "get_sprint_velocity": _get_sprint_velocity,
     }
     handler = dispatch.get(tool_name)
     if handler is None:
@@ -657,3 +715,79 @@ def _schedule_meeting(params: dict, config) -> str:
         f"   Attendees: {attendees}\n\n"
         "→ Configure Google Calendar credentials to schedule real meetings."
     )
+
+
+# ---------------------------------------------------------------------------
+# Product Metrics (demo — wire up to your analytics backend)
+# ---------------------------------------------------------------------------
+
+def _get_product_metrics(params: dict, config) -> str:
+    requested = params.get("metrics", ["all"])
+    period = params.get("period", "week")
+    compare_to = params.get("compare_to", "previous_period")
+
+    all_metrics = {
+        "dau": {"name": "Daily Active Users", "value": "24,831", "prev": "22,104", "change": "+12.3%", "target": "25,000", "vs_target": "-0.7%"},
+        "mau": {"name": "Monthly Active Users", "value": "187,420", "prev": "179,200", "change": "+4.6%", "target": "200,000", "vs_target": "-6.3%"},
+        "conversion": {"name": "Free → Paid Conversion", "value": "4.2%", "prev": "4.8%", "change": "-12.5%", "target": "5.0%", "vs_target": "-16.0%"},
+        "retention": {"name": "30-Day Retention", "value": "68.4%", "prev": "71.2%", "change": "-3.9%", "target": "70.0%", "vs_target": "-2.3%"},
+        "revenue": {"name": "MRR", "value": "$284,500", "prev": "$261,300", "change": "+8.9%", "target": "$300,000", "vs_target": "-5.2%"},
+        "churn": {"name": "Monthly Churn Rate", "value": "2.8%", "prev": "2.3%", "change": "+21.7%", "target": "2.0%", "vs_target": "+40.0%"},
+        "nps": {"name": "NPS Score", "value": "42", "prev": "38", "change": "+10.5%", "target": "50", "vs_target": "-16.0%"},
+    }
+
+    show_all = "all" in requested
+    metrics_to_show = all_metrics if show_all else {k: v for k, v in all_metrics.items() if k in requested}
+
+    lines = [f"[Demo] **Product Metrics — Last {period.capitalize()} vs {compare_to.replace('_', ' ').title()}**\n"]
+    lines.append(f"| Metric | Current | {'vs ' + compare_to.replace('_', ' ').title()} | Target | vs Target |")
+    lines.append("|--------|---------|------------|--------|-----------|")
+    for m in metrics_to_show.values():
+        change_icon = "🟢" if m["change"].startswith("+") and m["name"] != "Monthly Churn Rate" else "🔴"
+        if m["name"] == "Monthly Churn Rate":
+            change_icon = "🔴" if m["change"].startswith("+") else "🟢"
+        lines.append(
+            f"| {m['name']} | **{m['value']}** | {change_icon} {m['change']} | {m['target']} | {m['vs_target']} |"
+        )
+
+    lines.append("\n**Key signals:**")
+    lines.append("- 🔴 Conversion dropped 12.5% WoW — checkout funnel analysis needed")
+    lines.append("- 🔴 Churn spiked 21.7% — enterprise segment most affected (check Slack #customer-success)")
+    lines.append("- 🟢 DAU near target, driven by new onboarding flow shipped Monday")
+    lines.append("- 🟢 MRR growing 8.9% but conversion drag will slow this by Q3 if not addressed")
+
+    return "\n".join(lines)
+
+
+def _get_sprint_velocity(params: dict, config) -> str:
+    num_sprints = params.get("sprints", 6)
+    team = params.get("team", "all teams")
+
+    sprints = [
+        {"name": "Sprint 42", "points": 47, "completed": 44, "cycle_time": 3.2},
+        {"name": "Sprint 43", "points": 52, "completed": 49, "cycle_time": 2.9},
+        {"name": "Sprint 44", "points": 50, "completed": 38, "cycle_time": 4.1},
+        {"name": "Sprint 45", "points": 48, "completed": 47, "cycle_time": 3.0},
+        {"name": "Sprint 46", "points": 55, "completed": 53, "cycle_time": 2.7},
+        {"name": "Sprint 47 (current)", "points": 51, "completed": 31, "cycle_time": 2.8},
+    ]
+
+    sprints = sprints[-num_sprints:]
+    completed = [s["completed"] for s in sprints if "current" not in s["name"]]
+    avg_velocity = sum(completed) / len(completed) if completed else 0
+
+    lines = [f"[Demo] **Sprint Velocity — {team.title()} (last {num_sprints} sprints)**\n"]
+    lines.append("| Sprint | Planned | Completed | Hit Rate | Avg Cycle Time |")
+    lines.append("|--------|---------|-----------|----------|----------------|")
+    for s in sprints:
+        hit_rate = f"{s['completed'] / s['points'] * 100:.0f}%"
+        icon = "🟢" if s["completed"] / s["points"] >= 0.9 else "🟡" if s["completed"] / s["points"] >= 0.75 else "🔴"
+        lines.append(
+            f"| {s['name']} | {s['points']} pts | {s['completed']} pts | {icon} {hit_rate} | {s['cycle_time']}d |"
+        )
+
+    lines.append(f"\n**Average velocity (last {len(completed)} completed sprints):** {avg_velocity:.0f} pts/sprint")
+    lines.append("**Trend:** Velocity recovering after Sprint 44 dip (caused by infra incident + 2 engineers OOO)")
+    lines.append("**Cycle time:** Improving — down from 4.1d to 2.8d after introducing async code reviews")
+
+    return "\n".join(lines)

@@ -29,10 +29,66 @@ Each sub-agent is a separate Claude API call with a specialized system prompt an
 
 | Agent | Responsibility | Tools |
 |---|---|---|
-| **Orchestrator** | Plans, delegates, synthesizes | `research`, `write`, `execute` (delegates to sub-agents) |
+| **Orchestrator** | Plans, delegates, synthesizes | `research`, `analyze`, `write`, `execute` (delegates to sub-agents) |
 | **Researcher** | Gathers data from PM tools | Linear, Jira, GitHub, Slack, Calendar |
+| **Analyst** | Analyses metrics, surfaces trends, spots anomalies | Product metrics, Sprint velocity |
 | **Writer** | Produces polished PM artifacts | None — pure generation from context |
 | **Executor** | Takes actions in PM tools | Linear, Jira, Slack, Calendar (write operations) |
+
+## Use in Claude.ai Chat (MCP)
+
+PM Superpower can run as an **MCP server**, making all its tools available directly inside Claude.ai or Claude Code — no terminal needed.
+
+### 1. Install with MCP support
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### 2. Add to Claude's MCP config
+
+**Claude Code** (`~/.claude/settings.json` or `.claude/settings.json`):
+```json
+{
+  "mcpServers": {
+    "pm-superpower": {
+      "command": "pm-mcp",
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "LINEAR_API_KEY": "lin_api_...",
+        "SLACK_BOT_TOKEN": "xoxb-..."
+      }
+    }
+  }
+}
+```
+
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on Mac):
+```json
+{
+  "mcpServers": {
+    "pm-superpower": {
+      "command": "pm-mcp",
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-..."
+      }
+    }
+  }
+}
+```
+
+### 3. Use in chat
+
+After restarting Claude, type naturally:
+
+> "Generate my standup"
+> "Write a ticket for the SSO login bug"
+> "How is conversion trending this week?"
+> "Give me a status update for the mobile launch"
+
+Claude will call the PM Superpower tools automatically. The full agent team (Researcher, Analyst, Writer, Executor) runs under the hood.
+
+---
 
 ## Quick Start
 
@@ -77,6 +133,7 @@ python main.py
 | `pm standup` | Generate today's standup update |
 | `pm ticket "<description>"` | Write a production-ready ticket |
 | `pm status "<project>"` | Generate a project status update |
+| `pm ask "How is conversion trending?"` | Analyse metrics via Analyst agent |
 | `pm chat` | Alias for interactive mode |
 | `pm examples` | Show example commands |
 
@@ -86,6 +143,23 @@ python main.py
 pm ticket "Add dark mode to dashboard" --tool linear   # Create in Linear
 pm ticket "Fix login bug" --tool jira                  # Create in Jira
 ```
+
+## Metrics Analysis
+
+Ask the Analyst agent about any product or engineering metric:
+
+```bash
+pm ask "How is our conversion rate trending this month?"
+pm ask "What's the team's sprint velocity over the last 6 sprints?"
+pm ask "Why might churn be increasing? What do the numbers show?"
+pm ask "Give me a full product metrics dashboard"
+```
+
+The Analyst pulls `product_metrics` (DAU, MAU, conversion, retention, MRR, churn, NPS) and `sprint_velocity` data, calculates WoW/MoM trends, spots anomalies, and returns a data table with actionable insights.
+
+To connect your real analytics backend, replace the mock handlers in `tools.py` (`_get_product_metrics`, `_get_sprint_velocity`) with calls to your own data warehouse, Amplitude, Mixpanel, or similar.
+
+---
 
 ## PM Tool Integrations
 
@@ -159,12 +233,13 @@ python -m pm_superpower.cli standup
 ```
 pm-superpower/
 ├── main.py                    # Entry point
-├── setup.py                   # Package config + CLI entry point
+├── setup.py                   # Package config + CLI entry points
 ├── requirements.txt
 ├── .env.example               # Environment template
 └── pm_superpower/
     ├── __init__.py
     ├── cli.py                 # Click CLI + Rich UI
+    ├── mcp_server.py          # MCP server (for Claude.ai / Claude Code)
     ├── team.py                # Agent team orchestration
     ├── config.py              # Configuration from environment
     ├── prompts.py             # System prompts for each agent

@@ -25,6 +25,7 @@ import anthropic
 
 from pm_superpower.config import Config
 from pm_superpower.prompts import (
+    ANALYST_SYSTEM,
     EXECUTOR_SYSTEM,
     ORCHESTRATOR_SYSTEM,
     RESEARCHER_SYSTEM,
@@ -34,6 +35,7 @@ from pm_superpower.tools import (
     execute_pm_action,
     execute_pm_tool,
     get_pm_action_tools,
+    get_pm_metrics_tools,
     get_pm_query_tools,
 )
 
@@ -66,6 +68,32 @@ _ORCHESTRATOR_TOOLS = [
                 },
             },
             "required": ["query", "tools"],
+        },
+    },
+    {
+        "name": "analyze",
+        "description": (
+            "Delegate to the Analyst Agent to analyse product metrics and engineering data. "
+            "Use when the PM asks about KPIs, trends, conversion, retention, velocity, "
+            "performance, or 'how is X doing?'. Returns data tables + actionable insights."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The specific analysis question — be precise about what metrics and time window.",
+                },
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["product_metrics", "sprint_velocity"],
+                    },
+                    "description": "Which metric sources to pull from.",
+                },
+            },
+            "required": ["question", "metrics"],
         },
     },
     {
@@ -187,6 +215,8 @@ class PMTeam:
         self.agent_calls.append({"agent": agent, "params": params})
         if agent == "research":
             return self._research(params)
+        if agent == "analyze":
+            return self._analyze(params)
         if agent == "write":
             return self._write(params)
         if agent == "execute":
@@ -240,6 +270,50 @@ class PMTeam:
             messages.append({"role": "user", "content": tool_results})
 
         return "Research complete."
+
+    # ------------------------------------------------------------------
+    # Analyst sub-agent
+    # ------------------------------------------------------------------
+
+    def _analyze(self, params: dict) -> str:
+        question = params["question"]
+        requested_metrics = params.get("metrics", ["product_metrics", "sprint_velocity"])
+
+        metrics_tools = get_pm_metrics_tools(requested_metrics)
+        if not metrics_tools:
+            return "No metrics tools available for the requested sources."
+
+        messages: list[dict] = [{"role": "user", "content": question}]
+
+        for _ in range(_MAX_AGENT_TURNS):
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=4000,
+                system=ANALYST_SYSTEM,
+                tools=metrics_tools,
+                messages=messages,
+            )
+
+            if response.stop_reason == "end_turn":
+                return self._extract_text(response)
+
+            if response.stop_reason != "tool_use":
+                return self._extract_text(response)
+
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    data = execute_pm_tool(block.name, block.input, self.config)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": data,
+                    })
+
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+
+        return "Analysis complete."
 
     # ------------------------------------------------------------------
     # Writer sub-agent

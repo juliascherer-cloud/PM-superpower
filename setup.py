@@ -13,9 +13,13 @@ setup(
         "httpx>=0.27.0",
         "click>=8.1.0",
     ],
+    extras_require={
+        "mcp": ["mcp>=1.0.0"],
+    },
     entry_points={
         "console_scripts": [
             "pm=pm_superpower.cli:cli",
+            "pm-mcp=pm_superpower.mcp_server:main",
         ],
     },
 )
